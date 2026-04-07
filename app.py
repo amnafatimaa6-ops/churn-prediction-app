@@ -6,23 +6,36 @@ st.set_page_config(page_title="Churn Predictor", layout="wide")
 st.title("📊 Customer Churn Prediction App")
 st.markdown("Predict if a customer is likely to churn based on their details.")
 
-# Load & cache model
+# Load model
 @st.cache_resource
 def load_model():
     return get_trained_model("telco.csv")
 
 model, columns = load_model()
 
-st.header("Enter Customer Details")
+# Load dataset for dropdown options
+df = pd.read_csv("telco.csv")
+df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
+df = df.drop('customerID', axis=1)
+df['Churn'] = df['Churn'].map({'Yes': 1, 'No': 0})
 
-# Separate numeric and categorical columns dynamically
-numeric_cols = ["tenure", "MonthlyCharges", "TotalCharges"]
-categorical_cols = [col for col in columns if col not in numeric_cols]
+# Identify numeric and categorical
+numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+numeric_cols = [c for c in numeric_cols if c != 'Churn']
 
-# Split UI into two columns
+# Define the categorical columns explicitly as per your list
+categorical_cols = [
+    "gender", "Partner", "Dependents", "PhoneService", "MultipleLines", 
+    "InternetService", "OnlineSecurity", "OnlineBackup", "DeviceProtection",
+    "TechSupport", "StreamingTV", "StreamingMovies", "Contract",
+    "PaperlessBilling", "PaymentMethod"
+]
+
+# Layout: 2 columns
 col1, col2 = st.columns(2)
 input_data = {}
 
+# Numeric inputs
 with col1:
     for col in numeric_cols:
         if col == "tenure":
@@ -30,24 +43,23 @@ with col1:
         else:
             input_data[col] = st.number_input(col, value=0.0, step=1.0)
 
+# Categorical dropdowns
 with col2:
     for col in categorical_cols:
-        # Example: gender dropdown
-        if col.lower() == "gender":
-            input_data[col] = st.selectbox("Gender", ["Male", "Female"])
-        else:
-            # Default: text input turned into selectbox if possible
-            input_data[col] = st.text_input(col, value="")
+        if col in df.columns:
+            options = df[col].dropna().unique().tolist()
+            input_data[col] = st.selectbox(col, options)
 
+# Convert to dataframe
 input_df = pd.DataFrame([input_data])
 
 st.markdown("---")
 
+# Predict
 if st.button("Predict Churn"):
     prediction = model.predict(input_df)[0]
     prob = model.predict_proba(input_df)[0][1]
 
-    # Show metrics visually
     col3, col4 = st.columns(2)
     if prediction == 1:
         col3.metric("Prediction", "Likely to Churn ⚠️", delta=f"{prob:.0%} probability")
@@ -56,5 +68,9 @@ if st.button("Predict Churn"):
         col3.metric("Prediction", "Will Stay ✅", delta=f"{prob:.0%} probability")
         st.success("Customer is likely to stay. Keep up the engagement!")
 
-    # Optional: probability bar
-    st.progress(int(prob*100))
+    # Visual probability bar
+    st.progress(int(prob * 100))
+
+    # Input summary
+    st.subheader("Customer Input Summary")
+    st.table(input_df.T.rename(columns={0: "Value"}))
