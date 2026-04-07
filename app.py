@@ -1,36 +1,78 @@
 import streamlit as st
 import pandas as pd
-import joblib
 
-# Load model
-model = joblib.load('churn_model_pipeline.pkl')
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestClassifier
 
-st.title("📊 Customer Churn Prediction App")
+# Page config
+st.set_page_config(page_title="Churn Predictor", layout="centered")
 
-st.write("Fill in customer details:")
+st.title("📊 Customer Churn Prediction")
 
-# Example inputs (adjust based on your dataset)
-tenure = st.slider("Tenure (months)", 0, 72)
-monthly_charges = st.number_input("Monthly Charges")
-total_charges = st.number_input("Total Charges")
+# Load & train model (cached so it runs once)
+@st.cache_resource
+def load_model():
+    df = pd.read_csv("telco.csv")
 
-contract = st.selectbox("Contract Type", ["Month-to-month", "One year", "Two year"])
-internet_service = st.selectbox("Internet Service", ["DSL", "Fiber optic", "No"])
+    df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
+    df = df.drop('customerID', axis=1)
+    df['Churn'] = df['Churn'].map({'Yes': 1, 'No': 0})
 
-# Create input dataframe
-input_data = pd.DataFrame({
-    'tenure': [tenure],
-    'MonthlyCharges': [monthly_charges],
-    'TotalCharges': [total_charges],
-    'Contract': [contract],
-    'InternetService': [internet_service]
-})
+    X = df.drop('Churn', axis=1)
+    y = df['Churn']
 
-# Prediction
-if st.button("Predict"):
-    prediction = model.predict(input_data)[0]
-    
-    if prediction == 1:
-        st.error("⚠️ Customer is likely to churn")
+    numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
+    categorical_features = X.select_dtypes(include=['object']).columns
+
+    numeric_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
+
+    categorical_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('encoder', OneHotEncoder(handle_unknown='ignore'))
+    ])
+
+    preprocessor = ColumnTransformer([
+        ('num', numeric_pipeline, numeric_features),
+        ('cat', categorical_pipeline, categorical_features)
+    ])
+
+    model = Pipeline([
+        ('preprocessor', preprocessor),
+        ('classifier', RandomForestClassifier())
+    ])
+
+    model.fit(X, y)
+    return model, X.columns
+
+model, columns = load_model()
+
+st.write("Enter customer details:")
+
+# Dynamically create inputs
+input_data = {}
+
+for col in columns:
+    if col == "tenure":
+        input_data[col] = st.slider(col, 0, 72)
+    elif col in ["MonthlyCharges", "TotalCharges"]:
+        input_data[col] = st.number_input(col, value=0.0)
     else:
-        st.success("✅ Customer will stay")
+        input_data[col] = st.text_input(col)
+
+input_df = pd.DataFrame([input_data])
+
+if st.button("Predict"):
+    prediction = model.predict(input_df)[0]
+    prob = model.predict_proba(input_df)[0][1]
+
+    if prediction == 1:
+        st.error(f"⚠️ Likely to churn ({prob:.2f})")
+    else:
+        st.success(f"✅ Will stay ({prob:.2f})")
